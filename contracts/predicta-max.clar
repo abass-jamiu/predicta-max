@@ -66,3 +66,70 @@
     ;; Validation checks
     (asserts! (is-eq tx-sender contract-owner) err-owner-only)
     (asserts! (> end-block start-block) err-invalid-parameter)
+    (asserts! (> start-price u0) err-invalid-parameter)
+    ;; Initialize new market
+    (map-set markets market-id {
+      start-price: start-price,
+      end-price: u0,
+      total-up-stake: u0,
+      total-down-stake: u0,
+      start-block: start-block,
+      end-block: end-block,
+      resolved: false,
+    })
+    ;; Increment counter and return market ID
+    (var-set market-counter (+ market-id u1))
+    (ok market-id)
+  )
+)
+
+;; Allows users to place predictions with STX stakes
+(define-public (make-prediction
+    (market-id uint)
+    (prediction (string-ascii 4))
+    (stake uint)
+  )
+  (let (
+      (market (unwrap! (map-get? markets market-id) err-not-found))
+      (current-block stacks-block-height)
+    )
+    ;; Validation checks
+    (asserts!
+      (and
+        (>= current-block (get start-block market))
+        (< current-block (get end-block market))
+      )
+      err-market-closed
+    )
+    (asserts! (or (is-eq prediction "up") (is-eq prediction "down"))
+      err-invalid-prediction
+    )
+    (asserts! (>= stake (var-get minimum-stake)) err-invalid-prediction)
+    (asserts! (<= stake (stx-get-balance tx-sender)) err-insufficient-balance)
+    ;; Transfer stake to contract
+    (try! (stx-transfer? stake tx-sender (as-contract tx-sender)))
+    ;; Record user prediction
+    (map-set user-predictions {
+      market-id: market-id,
+      user: tx-sender,
+    } {
+      prediction: prediction,
+      stake: stake,
+      claimed: false,
+    })
+    ;; Update market stake totals
+    (map-set markets market-id
+      (merge market {
+        total-up-stake: (if (is-eq prediction "up")
+          (+ (get total-up-stake market) stake)
+          (get total-up-stake market)
+        ),
+        total-down-stake: (if (is-eq prediction "down")
+          (+ (get total-down-stake market) stake)
+          (get total-down-stake market)
+        ),
+      })
+    )
+    (ok true)
+  )
+)
